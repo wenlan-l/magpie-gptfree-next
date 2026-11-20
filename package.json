@@ -1,0 +1,23 @@
+{
+  "name": "magpie-gptfree-next",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "GPT号池 · 模块化重构版（Magpie 插件）。Windows 与 Linux 同等支持。",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node scripts/test.mjs",
+    "diagnose": "node diagnostics/collect.mjs"
+  },
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "chatgpt",
+    "account-pool"
+  ],
+  "license": "MIT",
+  "dependencies": {}
+}

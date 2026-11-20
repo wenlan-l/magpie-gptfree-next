@@ -1,0 +1,65 @@
+{
+  "name": "magpie-gptfree",
+  "version": "0.6.6",
+  "description": "GPT号池：Magpie 多账号批量导入与号池管理插件（支持独立 HTTP 登录与画图）",
+  "type": "module",
+  "main": "./index.mjs",
+  "bin": {
+    "magpie-gptfree": "./bin/import.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "lib",
+    "bin",
+    "README.md",
+    "test",
+    "gui",
+    "python"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:python": "python -m unittest discover -s python -p \"test_*.py\" -v",
+    "check": "node --check index.mjs && node --check lib/dsh-http-auth.mjs && node --check lib/chatgpt-web-image.mjs && node --check lib/chatgpt-web-text.mjs && node --check lib/pool-stats.mjs && node --check bin/import.mjs && node --check lib/importer.mjs && node --check lib/credentials.mjs && node --check lib/pool-vault.mjs && node --check lib/codex-pool.mjs && node --check lib/gui-service.mjs && node --check gui/app.js && node --check gui/entry.js && node --check lib/pool-connection.mjs && node --check lib/native-file-dialog.mjs && node --check lib/provider-native-signin.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {},
+  "keywords": [
+    "magpie",
+    "opencode",
+    "opencode-plugin",
+    "chatgpt",
+    "codex",
+    "auth",
+    "batch-import"
+  ],
+  "license": "MIT",
+  "magpie": {
+    "name": "GPT号池",
+    "page": {
+      "title": "GPT号池",
+      "titles": {
+        "zh": "GPT号池",
+        "zh-TW": "GPT號池"
+      },
+      "file": "gui/entry.html",
+      "service": {
+        "port": 37986,
+        "option": "port"
+      },
+      "keepAlive": true
+    },
+    "actions": [
+      {
+        "id": "batch-import",
+        "menu": "provider",
+        "title": "打开 GPT号池",
+        "titles": {
+          "zh": "打开 GPT号池",
+          "zh-TW": "開啟 GPT號池"
+        }
+      }
+    ]
+  }
+}
