@@ -33,8 +33,12 @@ async function safe(fn, fallback = null) {
 }
 
 async function dirListing(dir) {
-  const names = await safe(() => readdir(dir), []);
-  if (!Array.isArray(names)) return names;
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    return { entries: [], error: err.code || err.message };
+  }
   const rows = [];
   for (const name of names.slice(0, 50)) {
     const info = await safe(() => stat(join(dir, name)));
@@ -45,7 +49,7 @@ async function dirListing(dir) {
       modified: info?.mtime ? info.mtime.toISOString() : null,
     });
   }
-  return rows;
+  return { entries: rows };
 }
 
 function portProbe(port, host = "127.0.0.1", timeout = 1500) {
@@ -157,7 +161,7 @@ async function main() {
       path: mask(home),
       exists: await safe(() => access(home).then(() => true), false) === true,
       venvDir: mask(venvDir(home)),
-      entries: await dirListing(home),
+      ...(await dirListing(home)),
     },
     python: await pythonReport(home),
     port: { port: PORT, ...(await portProbe(PORT)), owner: await portOwner(PORT) },
