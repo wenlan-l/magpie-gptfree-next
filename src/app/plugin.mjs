@@ -77,10 +77,8 @@ export const GPTFreeGuiPlugin = async (ctx, options) => {
       port,
       onPoolChange: () => connection.sync(),
     });
-    if (service.portInfo?.reclaimed || service.port !== port) {
-      await log(ctx, "info",
-        `GPT号池 GUI 已监听 127.0.0.1:${service.port}` +
-        (service.port !== port ? `（首选端口 ${port} 被占用，已自动顺延）` : ""));
+    if (service.portInfo?.reclaimed) {
+      await log(ctx, "info", `GPT号池 GUI 已监听 127.0.0.1:${service.port}`);
     }
   } catch (error) {
     // The provider side does not need the GUI. Failing the whole plugin load

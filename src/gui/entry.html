@@ -9,8 +9,6 @@
   <style>
     html, body { height: 100%; margin: 0; }
     body { font: 14px/1.65 -apple-system, "Segoe UI", system-ui, sans-serif; }
-    #app { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-    #app[hidden] { display: none; }
     #boot {
       position: fixed; inset: 0; display: grid; place-content: center; gap: 8px;
       justify-items: center; text-align: center; padding: 24px;
@@ -25,11 +23,6 @@
     @keyframes spin { to { transform: rotate(360deg); } }
     h2 { font-size: 15px; font-weight: 600; margin: 0; }
     p { margin: 0; color: var(--magpie-muted, GrayText); max-width: 46ch; }
-    .detail {
-      display: none; margin-top: 6px; max-width: 52ch; text-align: left;
-      font: 12px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; opacity: .8;
-    }
-    .detail.on { display: block; }
     button {
       font: inherit; padding: 5px 14px; border-radius: 8px; cursor: pointer;
       border: 1px solid #8884; background: #8881; color: inherit;
@@ -38,13 +31,11 @@
   </style>
 </head>
 <body>
-  <iframe id="app" title="GPT号池" hidden></iframe>
   <main id="boot">
     <span class="pulse" aria-hidden="true"></span>
     <h2>GPT号池</h2>
     <p id="state">正在连接本地服务…</p>
     <button id="retry" type="button" hidden>重新连接</button>
-    <pre id="detail" class="detail"></pre>
   </main>
 </body>
 </html>

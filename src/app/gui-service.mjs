@@ -276,8 +276,7 @@ export function createGuiService({
     if (req.headers.host !== new URL(local).host) return deny(res, 403, "Invalid local service host");
     const uri = new URL(req.url || "/", local);
     const route = uri.pathname;
-    // Liveness endpoints: no session, no Origin gate, no vault access. The
-    // sidebar uses them to decide whether it is safe to navigate here.
+    // Diagnostic liveness endpoints do not access sessions or the vault.
     if (route === "/healthz" && req.method === "GET") {
       const address = server.address();
       res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -306,7 +305,7 @@ export function createGuiService({
       res.writeHead(204); res.end(); return;
     }
     if (!allowedOrigin) return deny(res);
-    if (route === "/ui" && req.method === "GET") {
+    if ((route === "/" || route === "/ui") && req.method === "GET") {
       // Never expose a provider-login ticket URL: native Providers uses
       // the OS file picker instead of navigating to a browser.
       if (uri.searchParams.has("ticket"))
@@ -786,8 +785,10 @@ export function createGuiService({
     address() { return server.address(); },
     async close() {
       for (const s of sessions.values()) s.job?.controller?.abort();
-      if (!server.listening) return;
-      await new Promise((resolve) => server.close(resolve));
+      if (server.listening) await new Promise((resolve) => server.close(resolve));
+      // Let an in-flight capability write land before the caller removes the
+      // home directory: a late write leaves a file behind and fails cleanup.
+      await savingSessions.catch(() => {});
     },
   };
 }
@@ -795,8 +796,7 @@ export function createGuiService({
 let activeService;
 /**
  * Starts the GUI on the preferred port, falling forward when it is taken, and
- * publishes the chosen port through the endpoint file so diagnostics and the
- * page probe range agree. A busy port is never a fatal error on its own.
+ * publishes the chosen port through the endpoint file for diagnostics.
  */
 export async function startGuiServer({ port = GUI_PORT, onPoolChange = null, home, log } = {}) {
   if (activeService) {
@@ -806,6 +806,10 @@ export async function startGuiServer({ port = GUI_PORT, onPoolChange = null, hom
   let pending = null;
   const picked = await startWithFallback({
     preferred: port,
+    // The host's page proxy and the sidebar entry both target the configured
+    // port. Moving to a neighbour would leave them talking to whatever owns
+    // the old port, so a foreign occupant is a hard failure, not a fallback.
+    span: 0,
     home,
     version: SERVICE_VERSION,
     log,
@@ -819,7 +823,11 @@ export async function startGuiServer({ port = GUI_PORT, onPoolChange = null, hom
         throw err;
       }
     },
+  }).catch(async (error) => {
+    await pending?.close().catch(() => {});
+    throw error;
   });
+  if (!pending) throw new Error("GUI listener could not be attached to this plugin instance");
   activeService = pending;
   activeService.port = picked.port;
   activeService.reused = picked.reused === true;

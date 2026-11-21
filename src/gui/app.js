@@ -863,13 +863,4 @@
     status();
   }
   setup();
-  // Announce readiness to the sidebar bootstrap. That page cannot trust the
-  // iframe load event (it also fires for error pages), so it waits for this
-  // message before hiding its connecting overlay.
-  try {
-    if (window.parent && window.parent !== window)
-      window.parent.postMessage({ type: "gptfree:ready" }, "*");
-  } catch {
-    /* standalone use: no parent to notify */
-  }
 })();
