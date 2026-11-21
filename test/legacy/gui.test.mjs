@@ -49,16 +49,9 @@ test("Magpie GUI manifest points to a real page, provider menu action and a loop
   assert(pkg.files.includes("src"));
   assert.equal(typeof GPTFreeGuiPlugin, "function");
   const page = await readFile(new URL("../../src/gui/entry.html", import.meta.url), "utf8");
-  const entry = await readFile(new URL("../../src/gui/entry.js", import.meta.url), "utf8");
   assert(page.includes("GPT号池"));
   assert(page.includes("_magpie/bridge.js"));
-  assert(entry.includes("magpie.service"));
-  // The bootstrap must probe before it navigates, and must keep its own
-  // document alive: navigating it away is what used to white-board the
-  // sidebar with no way back.
-  assert(entry.includes("healthz.png"));
-  assert(entry.includes("gptfree:ready"));
-  assert(!entry.includes("location.replace"));
+  assert(page.includes("entry.js"));
 });
 
 test("GUI serves a real page with editable TXT-to-textarea flow and no secrets or storage", async () => {

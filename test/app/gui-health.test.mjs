@@ -4,8 +4,8 @@ import { request } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGuiService, stopGuiServer } from "../../src/app/gui-service.mjs";
-import { SERVICE_MARKER, fetchHealth } from "../../src/app/lifecycle.mjs";
+import { createGuiService, startGuiServer, stopGuiServer } from "../../src/app/gui-service.mjs";
+import { SERVICE_MARKER, fetchHealth, readEndpoint } from "../../src/app/lifecycle.mjs";
 
 function get(port, path, { headers = {}, method = "GET" } = {}) {
   return new Promise((resolve, reject) => {
@@ -36,8 +36,7 @@ test("the GUI service proves itself on /healthz and /healthz.png", async () => {
     assert.equal(health.pid, process.pid);
     assert.equal(health.port, port);
 
-    // The sidebar can only use an <img> probe: the plugin page CSP forbids
-    // fetch, so this response must be a real image with caching disabled.
+    // The diagnostic image remains available without caching.
     const png = await get(port, "/healthz.png");
     assert.equal(png.status, 200);
     assert.equal(png.headers["content-type"], "image/png");
@@ -46,7 +45,7 @@ test("the GUI service proves itself on /healthz and /healthz.png", async () => {
 
     // The probe must not require a session or an Origin header, and must not
     // touch the vault: it answers before any account is configured.
-    const ui = await get(port, "/ui");
+    const ui = await get(port, "/");
     assert.equal(ui.status, 200);
     assert.match(ui.body.toString("utf8"), /GPT号池/);
 
@@ -59,5 +58,25 @@ test("the GUI service proves itself on /healthz and /healthz.png", async () => {
     if (before === undefined) delete process.env.MAGPIE_GPTFREE_HOME;
     else process.env.MAGPIE_GPTFREE_HOME = before;
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("first startup publishes an endpoint with no existing data directory", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "gptfree-first-start-"));
+  const home = join(parent, "new-home");
+  const before = process.env.MAGPIE_GPTFREE_HOME;
+  process.env.MAGPIE_GPTFREE_HOME = home;
+  const portFinder = createGuiService({ port: 0 });
+  const { port } = await portFinder.listen();
+  await portFinder.close();
+  try {
+    const service = await startGuiServer({ port, home });
+    assert.equal(readEndpoint(home)?.port, service.port);
+    assert.equal((await fetchHealth(service.port))?.service, SERVICE_MARKER);
+  } finally {
+    await stopGuiServer();
+    if (before === undefined) delete process.env.MAGPIE_GPTFREE_HOME;
+    else process.env.MAGPIE_GPTFREE_HOME = before;
+    await rm(parent, { recursive: true, force: true });
   }
 });

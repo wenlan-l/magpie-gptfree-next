@@ -10,10 +10,9 @@
  * the retry timer lived in the document that had just been replaced.
  *
  * The rules here:
- *   1. A service proves itself on a port (`/healthz` carries a marker + pid)
- *      before the page is allowed to navigate there.
- *   2. A busy port is never fatal: fall forward to the next one; the page
- *      probes the same deterministic range.
+ *   1. The health endpoint identifies a listener before reclaim is considered.
+ *   2. Internal callers can fall forward to the next port when a port is busy.
+ *      Magpie’s page proxy remains pinned to its configured port.
  *   3. A stale copy of *ourselves* (our marker, the pid from our own endpoint
  *      file, still alive) is reclaimed. Anything else is left untouched.
  */
@@ -22,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJson } from "../platform/atomic-file.mjs";
-import { pluginHome } from "../platform/paths.mjs";
+import { ensureDir, pluginHome } from "../platform/paths.mjs";
 import { killPid } from "../platform/proc.mjs";
 
 export const SERVICE_MARKER = "gptfree-gui";
@@ -45,6 +44,7 @@ export function readEndpoint(home = pluginHome()) {
 }
 
 export async function writeEndpoint(info, home = pluginHome()) {
+  await ensureDir(home);
   await writeJson(endpointFile(home), { service: SERVICE_MARKER, ...info }, { mode: 0o600 });
 }
 
