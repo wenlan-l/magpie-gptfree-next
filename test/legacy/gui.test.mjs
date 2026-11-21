@@ -499,9 +499,18 @@ test("GUI keeps a page usable across a plugin-host restart (persisted capability
     const html = await (await fetch(base + "ui")).text();
     token = html.match(/meta name="gptfree-session" content="([0-9a-f]{64})"/)?.[1];
     assert(token, "the page gets its capability");
-    // The capability is written for the next host process.
-    await new Promise((r) => setTimeout(r, 60));
-    const stored = JSON.parse(await readFile(sessionFile, "utf8"));
+    // The capability is written for the next host process. Poll instead of
+    // sleeping a fixed interval: slow CI runners may finish the write late.
+    let stored;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        stored = JSON.parse(await readFile(sessionFile, "utf8"));
+        break;
+      } catch (error) {
+        if (error.code !== "ENOENT" || attempt === 99) throw error;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
     assert.equal(stored.sessions.length, 1);
     assert.equal(stored.sessions[0].id, token);
     assert(!JSON.stringify(stored).includes("@"), "no account data in the session file");

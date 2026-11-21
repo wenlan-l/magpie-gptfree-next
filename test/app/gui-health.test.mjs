@@ -53,7 +53,7 @@ test("the GUI service proves itself on /healthz and /healthz.png", async () => {
     const denied = await get(port, "/api/status");
     assert.equal(denied.status, 403);
   } finally {
-    service.close?.().catch?.(() => {});
+    await service.close().catch(() => {});
     await stopGuiServer();
     if (before === undefined) delete process.env.MAGPIE_GPTFREE_HOME;
     else process.env.MAGPIE_GPTFREE_HOME = before;

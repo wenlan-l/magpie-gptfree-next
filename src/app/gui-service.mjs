@@ -785,8 +785,10 @@ export function createGuiService({
     address() { return server.address(); },
     async close() {
       for (const s of sessions.values()) s.job?.controller?.abort();
-      if (!server.listening) return;
-      await new Promise((resolve) => server.close(resolve));
+      if (server.listening) await new Promise((resolve) => server.close(resolve));
+      // Let an in-flight capability write land before the caller removes the
+      // home directory: a late write leaves a file behind and fails cleanup.
+      await savingSessions.catch(() => {});
     },
   };
 }
