@@ -1,0 +1,8 @@
+{
+  "repo": "yang0/magpie-gptfree",
+  "ref": "main",
+  "sha": "e9a1469f8e632c0ae92ebc6a3702a0c043983e93",
+  "snapshotVersion": "0.6.6",
+  "capturedAt": "2026-11-21T01:12:29Z",
+  "note": "Pinned to the v0.6.6 commit. baseline/upstream-0.6.6/ is a snapshot of the deployed 0.6.6 install (same version, copied from node_modules). Keep the pin and the snapshot in step: bump both in one commit when you take upstream changes."
+}

@@ -9,7 +9,7 @@
  * to a copy keeps the vault writable instead of failing the whole import.
  */
 import { randomBytes } from "node:crypto";
-import { copyFile, open, readFile, rename, rm } from "node:fs/promises";
+import { copyFile, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { longPath } from "./paths.mjs";
 
@@ -41,6 +41,22 @@ async function renameWithRetry(from, to, retries, delayMs) {
     return;
   }
   throw lastError;
+}
+
+/**
+ * Create a file only if it does not exist yet. Returns false when another
+ * process won the race (EEXIST) — used for key material, where overwriting an
+ * existing file would silently invalidate every encrypted record.
+ */
+export async function writeExclusive(file, data, { mode = 0o600 } = {}) {
+  const target = longPath(file);
+  try {
+    await writeFile(target, Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8"), { mode, flag: "wx" });
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw error;
+  }
 }
 
 export async function writeAtomic(file, data, options = {}) {

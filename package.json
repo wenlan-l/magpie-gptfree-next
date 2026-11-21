@@ -1,15 +1,28 @@
 {
   "name": "magpie-gptfree-next",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
+  "main": "./index.mjs",
   "description": "GPT号池 · 模块化重构版（Magpie 插件）。Windows 与 Linux 同等支持。",
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "magpie-gptfree-next": "./bin/import.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "src",
+    "python",
+    "bin",
+    "README.md"
+  ],
   "scripts": {
     "check": "node scripts/check.mjs",
     "test": "node scripts/test.mjs",
+    "canary": "node scripts/canary.mjs",
+    "upstream-diff": "node scripts/upstream-diff.mjs",
     "diagnose": "node diagnostics/collect.mjs"
   },
   "keywords": [
@@ -19,5 +32,32 @@
     "account-pool"
   ],
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {},
+  "magpie": {
+    "name": "GPT号池",
+    "page": {
+      "title": "GPT号池",
+      "titles": {
+        "zh": "GPT号池",
+        "zh-TW": "GPT號池"
+      },
+      "file": "src/gui/entry.html",
+      "service": {
+        "port": 37986,
+        "option": "port"
+      },
+      "keepAlive": true
+    },
+    "actions": [
+      {
+        "id": "batch-import",
+        "menu": "provider",
+        "title": "打开 GPT号池",
+        "titles": {
+          "zh": "打开 GPT号池",
+          "zh-TW": "開啟 GPT號池"
+        }
+      }
+    ]
+  }
 }

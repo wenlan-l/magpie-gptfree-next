@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readJson, writeAtomic, writeJson } from "../../src/platform/atomic-file.mjs";
+import { readJson, writeAtomic, writeExclusive, writeJson } from "../../src/platform/atomic-file.mjs";
 
 async function tempDir(t) {
   const dir = await mkdtemp(join(tmpdir(), "gptfree-atomic-"));
@@ -65,4 +65,14 @@ test("writeAtomic returns the original path and is private on POSIX", async (t) 
     const info = await stat(file);
     assert.equal(info.mode & 0o777, 0o600);
   }
+});
+
+test("writeExclusive never overwrites an existing file", async (t) => {
+  const dir = await tempDir(t);
+  const key = join(dir, "master.key");
+  assert.equal(await writeExclusive(key, Buffer.alloc(32, 1)), true);
+  // A second process racing for the same key must lose, not replace the key
+  // that already encrypted the vault.
+  assert.equal(await writeExclusive(key, Buffer.alloc(32, 2)), false);
+  assert.deepEqual(await readFile(key), Buffer.alloc(32, 1));
 });

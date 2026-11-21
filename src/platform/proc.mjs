@@ -9,6 +9,7 @@
  *    hard decode error.
  */
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 const DEFAULT_MAX_BUFFER = 8 * 1024 * 1024;
 
@@ -138,4 +139,192 @@ export function killTree(child, { gracefulMs = 1500 } = {}) {
     }
   }, gracefulMs);
   hard.unref?.();
+}
+
+/**
+ * Terminate a process we did not spawn (the previous plugin host's sidecar).
+ * Deliberately separate from killTree: there is no child handle to await, and
+ * on POSIX we cannot signal a process group we do not own reliably.
+ */
+export async function killPid(pid, { gracefulMs = 1500, platform = process.platform } = {}) {
+  const n = Number(pid);
+  if (!Number.isSafeInteger(n) || n <= 0) return false;
+
+  if (platform === "win32") {
+    await new Promise((resolve) => {
+      const killer = spawn("taskkill", ["/pid", String(n), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.on("error", resolve);
+      killer.on("close", resolve);
+    });
+    return true;
+  }
+
+  try {
+    process.kill(n, "SIGTERM");
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + gracefulMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      process.kill(n, 0);
+    } catch {
+      return true;
+    }
+  }
+  try {
+    process.kill(n, "SIGKILL");
+  } catch {
+    /* raced with exit */
+  }
+  return true;
+}
+
+/**
+ * Stream a child's stdout line by line, decoding UTF-8 across chunk
+ * boundaries.
+ *
+ * `runCommand` buffers everything, which is wrong for the streaming text
+ * worker: the caller forwards deltas to the user while the request is still
+ * running. A plain `chunk.toString("utf8")` (what upstream did) corrupts any
+ * multi-byte character that straddles a chunk boundary — Chinese replies
+ * arrived as replacement characters.
+ *
+ * Never rejects for a child that ran and failed: the caller decides what a
+ * non-zero exit, a timeout or an abort means.
+ */
+export function streamCommand(command, args = [], options = {}) {
+  const {
+    cwd,
+    env = process.env,
+    timeout = 0,
+    input,
+    signal,
+    onLine,
+    maxBuffer = DEFAULT_MAX_BUFFER,
+    maxStderr = 16 * 1024,
+  } = options;
+
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        shell: false,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({ spawnError: err, code: null, signal: null, stdout: "", stderr: "", timedOut: false, aborted: false });
+      return;
+    }
+
+    const outDecoder = new StringDecoder("utf8");
+    const errDecoder = new StringDecoder("utf8");
+    const stdout = [];
+    const stderr = [];
+    let pending = "";
+    let size = 0;
+    let settled = false;
+    let timedOut = false;
+    let aborted = false;
+    let overflowed = false;
+
+    const emitLine = (line) => {
+      if (!line.trim()) return;
+      try {
+        onLine?.(line);
+      } catch {
+        /* a bad listener must not take down the worker */
+      }
+    };
+
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size > maxBuffer) {
+        // Keep consuming so the pipe never blocks, but stop accumulating: the
+        // caller reports the overflow instead of parsing a truncated document.
+        overflowed = true;
+        return;
+      }
+      stdout.push(chunk);
+      pending += outDecoder.write(chunk);
+      let idx = pending.indexOf("\n");
+      while (idx !== -1) {
+        const line = pending.slice(0, idx).replace(/\r$/, "");
+        pending = pending.slice(idx + 1);
+        emitLine(line);
+        idx = pending.indexOf("\n");
+      }
+    };
+
+    const timer = timeout > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        killTree(child);
+      }, timeout)
+      : null;
+    timer?.unref?.();
+
+    const onAbort = () => {
+      aborted = true;
+      killTree(child);
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener?.("abort", onAbort);
+      resolve(value);
+    };
+
+    child.stdout.on("data", onData);
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < maxStderr) stderr.push(chunk);
+    });
+
+    child.on("error", (err) => {
+      finish({
+        spawnError: err,
+        code: null,
+        signal: null,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        timedOut,
+        aborted,
+        overflowed,
+      });
+    });
+
+    child.on("close", (code, sig) => {
+      const flushedOut = outDecoder.end();
+      const flushedErr = errDecoder.end();
+      pending += flushedOut;
+      const tail = pending.replace(/\r$/, "");
+      pending = "";
+      if (tail.trim()) emitLine(tail);
+      finish({
+        code,
+        signal: sig,
+        stdout: Buffer.concat(stdout).toString("utf8") + flushedOut,
+        stderr: Buffer.concat(stderr).toString("utf8") + flushedErr,
+        timedOut,
+        aborted,
+        overflowed,
+      });
+    });
+
+    child.stdin.on("error", () => {});
+    child.stdin.end(input === undefined ? "" : input, "utf8");
+  });
 }
