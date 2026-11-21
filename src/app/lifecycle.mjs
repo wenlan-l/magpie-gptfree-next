@@ -169,7 +169,9 @@ export async function startWithFallback({
     }
   }
 
-  const error = new Error(`本地服务端口 ${base}–${last} 均被占用`);
+  const error = new Error(base === last
+    ? `本地服务端口 ${base} 已被占用，请关闭占用该端口的程序或修改插件端口`
+    : `本地服务端口 ${base}–${last} 均被占用`);
   error.code = "ENOPORT";
   error.attempts = attempts;
   throw error;

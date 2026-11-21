@@ -806,6 +806,10 @@ export async function startGuiServer({ port = GUI_PORT, onPoolChange = null, hom
   let pending = null;
   const picked = await startWithFallback({
     preferred: port,
+    // The host's page proxy and the sidebar entry both target the configured
+    // port. Moving to a neighbour would leave them talking to whatever owns
+    // the old port, so a foreign occupant is a hard failure, not a fallback.
+    span: 0,
     home,
     version: SERVICE_VERSION,
     log,

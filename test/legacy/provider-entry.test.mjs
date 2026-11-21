@@ -301,11 +301,10 @@ test("the only import web UI is Magpie's sandboxed page; old browser tickets are
   } finally { await h.close(); }
 });
 
-test("a GUI port taken by another program falls forward instead of failing the load", async () => {
-  // A host restart overlaps the previous host for a moment, or an unrelated
-  // program owns 37986. The service must move to the next port and the page
-  // probe range must find it; failing the load used to take the provider down
-  // with it ("GPT号池 has no endpoint configured").
+test("a GUI port taken by another program fails loudly instead of moving", async () => {
+  // The host's page proxy is pinned to the configured port. Falling forward
+  // would leave the sidebar pointing at whatever owns the old port, so the
+  // service refuses to start and the provider keeps working without a GUI.
   const busy = createServer((_req, res) => { res.writeHead(200); res.end("not ours"); });
   await new Promise((resolve) => busy.listen(0, "127.0.0.1", resolve));
   const address = busy.address();
@@ -325,14 +324,13 @@ test("a GUI port taken by another program falls forward instead of failing the l
   try {
     const loaded = await GPTFreeGuiPlugin({ client }, { port: address.port });
     assert.deepEqual(loaded, {});
-    const endpoint = JSON.parse(await readFile(join(home, "gui-endpoint.json"), "utf8"));
-    assert.notEqual(endpoint.port, address.port);
-    assert(endpoint.port > address.port && endpoint.port <= address.port + 9);
-    // The fallback port must actually answer the health check the page probes.
-    const health = await fetchHealth(endpoint.port);
-    assert.equal(health?.service, "gptfree-gui");
-    assert.equal(health.port, endpoint.port);
-    assert.equal(logs.filter((l) => l.level === "warn").length, 0);
+    await assert.rejects(readFile(join(home, "gui-endpoint.json"), "utf8"), { code: "ENOENT" });
+    const warned = logs.filter((l) => l.level === "warn").map((l) => l.message).join("\n");
+    assert.match(warned, new RegExp(String(address.port)));
+    // The program holding the port is left alone.
+    const probe = await fetch(`http://127.0.0.1:${address.port}/`).then((r) => r.text()).catch(() => "");
+    assert.equal(probe, "not ours");
+    assert.equal(Boolean(await fetchHealth(address.port)), false);
   } finally {
     if (before === undefined) delete process.env.MAGPIE_GPTFREE_HOME;
     else process.env.MAGPIE_GPTFREE_HOME = before;
