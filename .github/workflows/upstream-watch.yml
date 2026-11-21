@@ -1,0 +1,85 @@
+name: upstream-watch
+
+# Two independent signals, both cheap:
+#   upstream — did the fork's base move? (issue, not a build failure)
+#   canary   — is the ChatGPT surface still shaped the way the workers expect?
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/canary.mjs"
+      - "scripts/upstream-diff.mjs"
+      - ".github/workflows/upstream-watch.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  upstream:
+    name: upstream diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compare pinned baseline with upstream head
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/upstream-diff.mjs --json > "$RUNNER_TEMP/upstream.json"
+      - name: Open or update a tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          read -r CHANGED HEAD SHA AHEAD < <(node -e '
+            const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            console.log([d.changed, d.headSha.slice(0, 8), d.headSha, d.aheadBy].join(" "));
+          ' "$RUNNER_TEMP/upstream.json")
+          if [ "$CHANGED" != "true" ]; then
+            echo "上游无新提交，跳过。"
+            exit 0
+          fi
+          TITLE="上游更新 ${HEAD}（+${AHEAD} 提交）"
+          BODY="$RUNNER_TEMP/issue.md"
+          {
+            echo "自动巡检发现 \`yang0/magpie-gptfree\` 有新提交。"
+            echo
+            echo '```'
+            node scripts/upstream-diff.mjs | sed -n '1,80p'
+            echo '```'
+            echo
+            echo "处理流程见 [docs/PROTOCOL.md](../blob/main/docs/PROTOCOL.md)：先读 diff，再决定是否换箱子里对应的文件；**不要直接安装上游包**。"
+            echo
+            echo "看完后关掉本 issue；下次上游再有提交会重新开一个。"
+          } > "$BODY"
+          EXISTING=$(gh issue list --state open --search "上游更新 in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file "$BODY"
+            echo "已在 issue #$EXISTING 追加评论。"
+          else
+            gh issue create --title "$TITLE" --body-file "$BODY"
+          fi
+
+  canary:
+    name: protocol canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Probe the protocol surface (no credentials)
+        run: node scripts/canary.mjs
+      # A red canary means the endpoint moved or now demands something new.
+      # It must be visible, but it must not block unrelated work.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-report
+          path: canary-report.json
+          if-no-files-found: ignore

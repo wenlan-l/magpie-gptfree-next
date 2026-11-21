@@ -1,91 +1,115 @@
 # 架构
 
-## 分层
+目标不是「把代码分文件夹」，而是让每一类 Windows 故障只能出现在一个地方。
 
 ```
-        ┌──────────────┐
-        │  gui/ (web)  │  无构建，ES 模块，只认 HTTP + 明确的状态机
-        └──────┬───────┘
-               │ 同源 fetch，带会话能力令牌
-        ┌──────▼───────┐
-        │  adapters/   │  Magpie provider 注册、HTTP 侧车、ProtocolAdapter 实现
-        └──────┬───────┘
-        ┌──────▼───────┐
-        │   core/      │  号池、凭据、额度、轮转：纯函数 + 显式依赖
-        └──────┬───────┘
-        ┌──────▼───────┐
-        │ platform/    │  OS 差异唯一出口
-        └──────┬───────┘
-        ┌──────▼───────┐
-        │ protocol/    │  上游 worker（Python），装箱，不改写
-        └──────────────┘
+                 ┌──────────────────────────────┐
+                 │ src/gui/   页面（无构建步骤） │
+                 └──────────────┬───────────────┘
+                                │ HTTP（loopback + 一次性会话令牌）
+                 ┌──────────────▼───────────────┐
+                 │ src/app/   宿主契约 + 侧车   │
+                 └──────────────┬───────────────┘
+                 ┌──────────────▼───────────────┐
+                 │ src/protocol/  上游协议（箱子）│
+                 └──────────────┬───────────────┘
+                 ┌──────────────▼───────────────┐
+                 │ src/storage/  凭证与统计落盘  │
+                 └──────────────┬───────────────┘
+                 ┌──────────────▼───────────────┐
+                 │ src/core/   纯逻辑、无 IO     │
+                 └──────────────┬───────────────┘
+                 ┌──────────────▼───────────────┐
+                 │ src/platform/  操作系统唯一出口│
+                 └──────────────────────────────┘
 ```
 
-依赖只允许向下。反向调用一律走注入（`core` 拿到的是回调，不是 `fs`）。
+依赖只能向下。`test/layering.test.mjs` 每次跑测试都会重新验证这一点，文档与代码
+不一致时先信测试。
+
+## 各层职责
+
+**platform** — 唯一允许碰 `node:os` / `node:child_process` / `node:net` 的地方。
+`paths.mjs`（数据目录、Windows 长路径前缀）、`python.mjs`（解释器探测：跳过 Microsoft
+Store 的假 `python.exe`、venv 创建、pip 安装）、`proc.mjs`（UTF-8 强制解码、按进程树回
+收、流式逐行）、`atomic-file.mjs`（EBUSY/EPERM 退避重试、独占创建）、`log.mjs`（入口
+强制脱敏）、`file-dialog.mjs`（原生文件选择器）。
+
+**core** — 纯函数与数据结构：账号行解析、JWT 过期判断、代理 URL 校验、TOTP、slot
+标签、模型白名单。没有 `fs`、没有 `path`，因此可以在任何平台上用普通单测覆盖。
+
+**storage** — 唯一允许 `fs` 的非 platform 层：加密号池（AES-256-GCM，密钥
+`master.key` 独占创建）、额度与生图统计（按 slot 标签索引，绝不写邮箱或 token）。
+
+**protocol** — 上游逆向实现，只装箱不改写。边界、报文契约、升级流程见
+[PROTOCOL.md](PROTOCOL.md)。它不知道 Magpie 存在。
+
+**app** — Magpie 契约：插件工厂（`GPTFreeGuiPlugin` / `GPTFreePoolPlugin`）、GUI 侧车
+（HTTP 服务、会话令牌、`/healthz`）、生命周期（端口段、陈旧进程回收）、号池与
+Magpie 账号的同步。
+
+**gui** — 原生 ES 模块，无打包、无框架。`entry.html` 只负责「把侧边栏画出来并连上侧
+车」，真正的内容页是 `dashboard.html`。
 
 ## 不变量
 
-| 编号 | 规则 | 违反后果 |
-|---|---|---|
-| I1 | `platform/` 之外不出现 `node:os`、`node:child_process` | 平台 bug 散落全仓库 |
-| I2 | `core/` 不出现 `node:fs`、`node:path` | 逻辑无法单测，Windows 路径判断满天飞 |
-| I3 | 所有子进程输出按 UTF-8 解码，`shell: false` | 中文 Windows 乱码、参数被 cmd 重写 |
-| I4 | 所有持久化写入走 `writeAtomic` | 断电/杀软导致 vault 半写 |
-| I5 | 日志入口强制脱敏 | Cookie/Token 落盘 |
-| I6 | 协议代码来自上游，只允许整体替换 | 无法跟随上游修复 |
+| # | 规则 | 为什么 | 谁在拦 |
+|---|---|---|---|
+| I1 | `platform/` 之外不得 import `node:os` / `child_process` / `net` | 这三样是 Windows 差异的全部来源 | `test/layering.test.mjs` |
+| I2 | `core/` 不得 import `node:fs` / `node:path` | 纯逻辑才能被两个平台同样的单测覆盖 | 同上 |
+| I3 | 依赖只能向下 | 反向依赖会把平台细节漏到协议层 | 同上 |
+| I4 | 子进程 `shell: false` | shell 引号在 Windows 上解释不同 | 同上 |
+| I5 | 持久化写入必须走 `writeAtomic` | 杀软/OneDrive 会让 rename 抛 EPERM | 同上 |
+| I6 | `platform/` 之外不得调用 `chmod` | Windows 上静默无效，制造虚假安全感 | 同上 |
+| I7 | 日志入口强制脱敏 | 上游把完整 URL 写进巡检日志 | `test/platform/log.test.mjs` |
 
-## 侧边栏生命周期（P1 的核心修复）
+## 侧边栏：从「盲跳」到状态机
 
-问题根源：入口页把自身 iframe 导航到侧车，一旦目标不可达，页面变成浏览器错误页，
-原文档里的任何重试逻辑都随之消失。
-
-新模型：
+上游的失败路径很短：
 
 ```
-idle ──start()──▶ probing ──ok──▶ ready ──▶ (serving)
-                     │                │
-                     │ 2s interval    │ 心跳失败
-                     ▼                ▼
-                  retrying ◀───────── degraded
-                     │
-                     └── 5 次失败 ──▶ failed(可读原因 + 手动重试)
+entry.html 内联脚本 → iframe.src = http://127.0.0.1:37986/ui → 6 秒后显示一句提示
 ```
 
-要点：
+`location` 级别的导航一旦失败，文档被替换成浏览器错误页，**原来的重试逻辑随文档一起
+消失**，用户只能重启 Magpie。侧车没起来、端口被占、上一轮进程没退——三种情况表现完全
+相同：白板。
 
-1. 侧车由 supervisor 管理：启动即探测 `/healthz`，绑定失败自动换端口（37986 →
-   37987 …）并回写 `plugins.json` 的 `port`。
-2. 入口页不再 `location.replace` 到未验证的地址，先探测再导航；失败留在
-   原文档内显示原因，重试按钮始终可用。
-3. 侧车退出时按进程树回收（Windows `taskkill /T`），避免端口被上一轮占住。
-4. 会话能力令牌持久化到 vault 同目录（0600 语义在 Windows 由 ACL 兜底），
-   跨宿主重启仍可用。
+现在：
 
-## 存储
+1. 入口页不导航自己。它渲染 `#boot` 覆盖层，用一个隐藏的 `#app` iframe 承载真正页面。
+2. 每 400ms 用 `<img src="/healthz.png">` 探测端口段（`37986` 起 10 个）。插件页 CSP
+   禁止 `fetch`，`<img>` 是唯一可用的跨源就绪信号；服务端回 1×1 透明 PNG。
+3. 服务端 `/healthz` 返回 `{service: "gptfree-gui", pid, port, version}`，页面据此确认
+   「这是我的侧车」，而不是恰好占着端口的别的程序。
+4. 内容页加载完成后向 parent 发 `{type: "gptfree:ready"}`，覆盖层收起——探测与
+   postMessage 双保险，谁先到用谁。
+5. 25 秒预算用完仍未连上，覆盖层**留在原地**，显示探测日志与「重试」按钮，并把原因
+   分成三类：端口段被占、侧车启动失败、页面加载超时。
 
-- 单写者：所有写操作排进一个队列，进程内串行。
-- 原子替换：临时文件 + `fsync` + rename，Windows 上对 EPERM/EBUSY/EACCES 退避
-  重试，最终降级为复制。
-- 路径：统一过 `longPath()`，中文用户名 + 深层目录不再 ENOENT。
-- 权限：POSIX 用 `0600`；Windows 记录明确事实——文件仅继承用户目录 ACL，并在
-  文档中声明，而不是假装 `chmod` 生效。
+端口不使用随机值：页面和服务端遍历同一段确定性端口，互不需要发现通道。
 
-## 协议适配器（P3）
+## 陈旧进程回收的判定
 
-```js
-/**
- * @typedef {Object} ProtocolAdapter
- * @property {() => Promise<{version: string}>} handshake
- * @property {(account, opts) => Promise<Session>} login
- * @property {(session) => Promise<Session>} refresh
- * @property {(session, messages, opts) => AsyncIterable<Chunk>} chat
- * @property {(session, prompt, opts) => Promise<ImageResult>} image
- * @property {(session) => Promise<Quota>} quota
- */
-```
+只有同时满足三条才会被回收，否则一律只记日志：
 
-适配器是唯一允许知道「ChatGPT 网页端长什么样」的地方。每个方法配一份真实响应
-fixture，改动协议时先跑契约测试，再谈上层。
+1. `/healthz` 的 `service` 字段是我们的 marker；
+2. endpoint 文件里的 `pid` 与该进程一致；
+3. 该 pid 仍存活。
 
-协议漂移的发现靠金丝雀（P5）：每天一次低成本 `handshake` + `chat`，按错误码
-分类记录。GitHub 上的上游提交只是提前量，不是唯一信号。
+这样既不会误杀「别人的 37986」，也不会因为上一轮崩溃留下的文件而阻塞启动。
+
+## 安全模型
+
+- 号池凭证只存在本机加密文件里，`master.key` 独占创建（已存在则绝不覆盖）；不是硬件
+  级密钥库，同一 OS 用户可读——不假装更强。
+- Magpie 的 plugin-auth 存储里只放掩码标签与 slot 标签（`s<sha256 前 10 位>`），不放
+  邮箱、密码、token。
+- GUI 服务只绑 `127.0.0.1`，每个页面一个一次性会话令牌，`Origin` 与 `Host` 都校验。
+- `/healthz` 是唯一无鉴权路由，只回版本/pid/端口，不读 vault、不触发任何账号操作。
+- 日志与诊断包在入口脱敏；诊断包只读元数据。
+
+## 已知的「不属于我们」
+
+`src/protocol/` 与 `python/` 是上游逆向实现，本仓库不试图改进它的正确性，只保证它的
+输入输出形状稳定。协议变更的处理流程见 [PROTOCOL.md](PROTOCOL.md)。
